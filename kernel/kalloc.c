@@ -4,6 +4,8 @@
 
 #include "types.h"
 #include "param.h"
+#include "buddy.h"
+
 #include "memlayout.h"
 #include "spinlock.h"
 #include "riscv.h"
@@ -26,6 +28,12 @@ struct {
 void
 kinit()
 {
+
+  buddy_init((void*)PGROUNDUP((uint64)end), (void*)PHYSTOP);
+
+  buddy_cross_order_test();
+
+
   initlock(&kmem.lock, "kmem");
   freerange(end, (void*)PHYSTOP);
 }

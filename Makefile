@@ -3,6 +3,7 @@ U=user
 
 OBJS = \
   $K/entry.o \
+  $K/buddy.o \
   $K/start.o \
   $K/console.o \
   $K/printf.o \
