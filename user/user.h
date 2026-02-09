@@ -25,6 +25,25 @@ char* sys_sbrk(int,int);
 int pause(int);
 int uptime(void);
 
+// slab allocator syscalls
+typedef unsigned long uint64;
+typedef uint64 size_t;
+typedef void* kmem_cache_t;
+#define BLOCK_SIZE 4096
+
+int kmem_init(int);
+kmem_cache_t kmem_cache_create(const char*, int, int, int);
+uint64 kmem_cache_alloc(kmem_cache_t);
+int kmem_cache_free(kmem_cache_t, uint64);
+int kmem_cache_destroy(kmem_cache_t);
+int kmem_cache_shrink(kmem_cache_t);
+int kmem_cache_info(kmem_cache_t);
+int kmem_cache_error(kmem_cache_t);
+uint64 kmalloc(int);
+int kfree(uint64);
+int slab_write(uint64, const void*, int);
+int slab_read(void*, uint64, int);
+
 // ulib.c
 int stat(const char*, struct stat*);
 char* strcpy(char*, const char*);

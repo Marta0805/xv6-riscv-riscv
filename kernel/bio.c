@@ -22,10 +22,17 @@
 #include "defs.h"
 #include "fs.h"
 #include "buf.h"
+#ifdef SLAB_KERNEL
+#include "slab.h"
+#endif
 
 struct {
   struct spinlock lock;
-  struct buf buf[NBUF];
+#ifdef SLAB_KERNEL
+  struct buf *buf;     // dynamically allocated via kmalloc
+#else
+  struct buf buf[NBUF];  // static array (original xv6)
+#endif
 
   // Linked list of all buffers, through prev/next.
   // Sorted by how recently the buffer was used.
@@ -39,6 +46,14 @@ binit(void)
   struct buf *b;
 
   initlock(&bcache.lock, "bcache");
+
+#ifdef SLAB_KERNEL
+  // Allocate buffer cache dynamically
+  bcache.buf = (struct buf*)kmalloc(sizeof(struct buf) * NBUF);
+  if(!bcache.buf)
+    panic("binit: kmalloc");
+  memset(bcache.buf, 0, sizeof(struct buf) * NBUF);
+#endif
 
   // Create linked list of buffers
   bcache.head.prev = &bcache.head;

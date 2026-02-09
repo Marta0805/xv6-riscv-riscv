@@ -5,10 +5,17 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#ifdef SLAB_KERNEL
+#include "slab.h"
+#endif
 
 struct cpu cpus[NCPU];
 
-struct proc proc[NPROC];
+#ifdef SLAB_KERNEL
+struct proc *proc;  // dynamically allocated via kmalloc
+#else
+struct proc proc[NPROC];  // static array (original xv6)
+#endif
 
 struct proc *initproc;
 
@@ -33,7 +40,17 @@ void
 proc_mapstacks(pagetable_t kpgtbl)
 {
   struct proc *p;
-  
+
+#ifdef SLAB_KERNEL
+  // Allocate proc table if not yet done
+  if(!proc) {
+    proc = (struct proc*)kmalloc(sizeof(struct proc) * NPROC);
+    if(!proc)
+      panic("proc_mapstacks: kmalloc");
+    memset(proc, 0, sizeof(struct proc) * NPROC);
+  }
+#endif
+
   for(p = proc; p < &proc[NPROC]; p++) {
     char *pa = kalloc();
     if(pa == 0)
@@ -48,7 +65,7 @@ void
 procinit(void)
 {
   struct proc *p;
-  
+
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
   for(p = proc; p < &proc[NPROC]; p++) {
@@ -156,7 +173,7 @@ static void
 freeproc(struct proc *p)
 {
   if(p->trapframe)
-    kfree((void*)p->trapframe);
+    pgfree((void*)p->trapframe);
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);

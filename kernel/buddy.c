@@ -4,33 +4,24 @@
 #include "buddy.h"
 #include "defs.h"
 
-#define BLOCK_SIZE 4096
-
-static struct {
-    struct spinlock lock;
-    struct buddy_block *free[BUDDY_ORDERS];
-    uint64 start;
-    int max_order;
-} buddy;
-
 static inline int idx(int order)
 {
     return order - MIN_ORDER;
 }
 
-void buddy_dump(void)
+void buddy_dump(struct buddy_allocator *b)
 {
-    acquire(&buddy.lock);
+    acquire(&b->lock);
 
     printf("\n=== BUDDY ===\n");
 
-    for (int o = MIN_ORDER; o <= buddy.max_order; o++) {
+    for (int o = MIN_ORDER; o <= b->max_order; o++) {
         int count = 0;
-        struct buddy_block *b = buddy.free[idx(o)];
+        struct buddy_block *bl = b->free[idx(o)];
 
-        while (b) {
+        while (bl) {
             count++;
-            b = b->next;
+            bl = bl->next;
         }
 
         if (count == 0)
@@ -41,107 +32,124 @@ void buddy_dump(void)
         printf("order %d | block size %lu KB | %d blocks\n",
                o, size / 1024, count);
 
-        b = buddy.free[idx(o)];
-        while (b) {
-            printf("    %p\n", b);
-            b = b->next;
+        bl = b->free[idx(o)];
+        while (bl) {
+            printf("    %p\n", bl);
+            bl = bl->next;
         }
     }
 
     printf("=================\n\n");
 
-    release(&buddy.lock);
+    release(&b->lock);
 }
 
-void buddy_init(void *start, void *end)
+void buddy_init(struct buddy_allocator *b, void *start, void *end)
 {
-    initlock(&buddy.lock, "buddy");
+    initlock(&b->lock, "buddy");
 
-    buddy.start = PGROUNDUP((uint64)start);
+    b->start = PGROUNDUP((uint64)start);
     uint64 limit = (uint64)end;
-    uint64 total = limit - buddy.start;
+    uint64 total = limit - b->start;
 
     for (int i = 0; i < BUDDY_ORDERS; i++)
-        buddy.free[i] = 0;
+        b->free[i] = 0;
 
-    int order = MAX_ORDER;
-    while (order >= MIN_ORDER) {
-        uint64 size = (1UL << order) * BLOCK_SIZE;
-        if (size <= total)
+    // Find the highest order that fits at all
+    int max_ord = MAX_ORDER;
+    while (max_ord >= MIN_ORDER) {
+        if (((uint64)1 << max_ord) * BLOCK_SIZE <= total)
             break;
-        order--;
+        max_ord--;
     }
 
-    if (order < MIN_ORDER) {
+    if (max_ord < MIN_ORDER) {
         printf("[BUDDY] init failed\n");
-        buddy.max_order = MIN_ORDER - 1;
+        b->max_order = MIN_ORDER - 1;
         return;
     }
 
-    buddy.max_order = order;
+    b->max_order = max_ord;
+    b->total_size = total;
 
-    struct buddy_block *b = (struct buddy_block *)buddy.start;
-    b->next = 0;
-    buddy.free[idx(order)] = b;
+    // Greedily place blocks: from largest order down to smallest,
+    // filling all available memory.
+    uint64 addr = b->start;
+    uint64 remaining = total;
+    int placed = 0;
+
+    for (int order = max_ord; order >= MIN_ORDER; order--) {
+        uint64 bsize = (uint64)1 << (order + 12);
+        while (remaining >= bsize) {
+            struct buddy_block *bl = (struct buddy_block *)addr;
+            bl->next = b->free[idx(order)];
+            b->free[idx(order)] = bl;
+            addr += bsize;
+            remaining -= bsize;
+            placed++;
+        }
+    }
+
+    printf("[BUDDY] initialized: %lu KB in %d blocks\n",
+           (total - remaining) / 1024, placed);
 }
 
-void *buddy_alloc(int order)
+void *buddy_alloc(struct buddy_allocator *b, int order)
 {
-    if (order < MIN_ORDER || order > buddy.max_order)
+    if (order < MIN_ORDER || order > b->max_order)
         return 0;
 
-    acquire(&buddy.lock);
+    acquire(&b->lock);
 
     int o;
-    for (o = order; o <= buddy.max_order; o++) {
-        if (buddy.free[idx(o)])
+    for (o = order; o <= b->max_order; o++) {
+        if (b->free[idx(o)])
             break;
     }
 
-    if (o > buddy.max_order) {
-        release(&buddy.lock);
+    if (o > b->max_order) {
+        release(&b->lock);
         return 0;
     }
 
-    struct buddy_block *b = buddy.free[idx(o)];
-    buddy.free[idx(o)] = b->next;
+    struct buddy_block *bl = b->free[idx(o)];
+    b->free[idx(o)] = bl->next;
 
     while (o > order) {
         o--;
         uint64 size = (1UL << o) * BLOCK_SIZE;
         struct buddy_block *split =
-            (struct buddy_block *)((uint64)b + size);
-        split->next = buddy.free[idx(o)];
-        buddy.free[idx(o)] = split;
+            (struct buddy_block *)((uint64)bl + size);
+        split->next = b->free[idx(o)];
+        b->free[idx(o)] = split;
     }
 
-    release(&buddy.lock);
-    return (void *)b;
+    release(&b->lock);
+    return (void *)bl;
 }
 
-void buddy_free(void *addr, int order)
+void buddy_free(struct buddy_allocator *b, void *addr, int order)
 {
-    if (!addr || order < MIN_ORDER || order > buddy.max_order)
+    if (!addr || order < MIN_ORDER || order > b->max_order)
         return;
 
-    acquire(&buddy.lock);
+    acquire(&b->lock);
 
-    if ((uint64)addr < buddy.start ||
-        (uint64)addr >= buddy.start +
-        ((uint64)1 << buddy.max_order) * BLOCK_SIZE) {
+    if ((uint64)addr < b->start ||
+        (uint64)addr >= b->start + b->total_size) {
         printf("[BUDDY] invalid free: %p\n", addr);
-        release(&buddy.lock);
+        release(&b->lock);
         return;
     }
 
     uint64 block = (uint64)addr;
 
-    while (order < buddy.max_order) {
+    while (order < b->max_order) {
         uint64 size = (1UL << order) * BLOCK_SIZE;
         uint64 buddy_addr =
-            ((block - buddy.start) ^ size) + buddy.start;
+            ((block - b->start) ^ size) + b->start;
 
-        struct buddy_block **pp = &buddy.free[idx(order)];
+        struct buddy_block **pp = &b->free[idx(order)];
         struct buddy_block *curr = *pp;
 
         while (curr) {
@@ -162,9 +170,9 @@ void buddy_free(void *addr, int order)
         order++;
     }
 
-    struct buddy_block *b = (struct buddy_block *)block;
-    b->next = buddy.free[idx(order)];
-    buddy.free[idx(order)] = b;
+    struct buddy_block *bl = (struct buddy_block *)block;
+    bl->next = b->free[idx(order)];
+    b->free[idx(order)] = bl;
 
-    release(&buddy.lock);
+    release(&b->lock);
 }

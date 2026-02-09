@@ -7,6 +7,9 @@
 #include "fs.h"
 #include "sleeplock.h"
 #include "file.h"
+#ifdef SLAB_KERNEL
+#include "slab.h"
+#endif
 
 #define PIPESIZE 512
 
@@ -19,17 +22,45 @@ struct pipe {
   int writeopen;  // write fd is still open
 };
 
+#ifdef SLAB_KERNEL
+static kmem_cache_t *pipe_cache;
+static struct spinlock pipe_cache_lock;
+static int pipe_cache_lock_inited;
+#endif
+
 int
 pipealloc(struct file **f0, struct file **f1)
 {
   struct pipe *pi;
 
+#ifdef SLAB_KERNEL
+  // Lazily create pipe cache (thread-safe)
+  if(!pipe_cache) {
+    if(!pipe_cache_lock_inited) {
+      initlock(&pipe_cache_lock, "pipe_cache");
+      pipe_cache_lock_inited = 1;
+    }
+    acquire(&pipe_cache_lock);
+    if(!pipe_cache) {
+      pipe_cache = kmem_cache_create("pipe", sizeof(struct pipe), 0, 0);
+      if(!pipe_cache)
+        panic("pipealloc: cache create");
+    }
+    release(&pipe_cache_lock);
+  }
+#endif
+
   pi = 0;
   *f0 = *f1 = 0;
   if((*f0 = filealloc()) == 0 || (*f1 = filealloc()) == 0)
     goto bad;
+#ifdef SLAB_KERNEL
+  if((pi = (struct pipe*)kmem_cache_alloc(pipe_cache)) == 0)
+    goto bad;
+#else
   if((pi = (struct pipe*)kalloc()) == 0)
     goto bad;
+#endif
   pi->readopen = 1;
   pi->writeopen = 1;
   pi->nwrite = 0;
@@ -47,7 +78,11 @@ pipealloc(struct file **f0, struct file **f1)
 
  bad:
   if(pi)
-    kfree((char*)pi);
+#ifdef SLAB_KERNEL
+    kmem_cache_free(pipe_cache, (void*)pi);
+#else
+    pgfree((char*)pi);
+#endif
   if(*f0)
     fileclose(*f0);
   if(*f1)
@@ -68,7 +103,11 @@ pipeclose(struct pipe *pi, int writable)
   }
   if(pi->readopen == 0 && pi->writeopen == 0){
     release(&pi->lock);
-    kfree((char*)pi);
+#ifdef SLAB_KERNEL
+    kmem_cache_free(pipe_cache, (void*)pi);
+#else
+    pgfree((char*)pi);
+#endif
   } else
     release(&pi->lock);
 }

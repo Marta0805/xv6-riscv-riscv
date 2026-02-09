@@ -5,8 +5,15 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#ifdef SLAB_KERNEL
+#include "slab.h"
+#endif
 
+#ifdef SLAB_KERNEL
+struct spinlock *tickslock_ptr;  // dynamically allocated via kmalloc
+#else
 struct spinlock tickslock;
+#endif
 uint ticks;
 
 extern char trampoline[], uservec[];
@@ -19,6 +26,12 @@ extern int devintr();
 void
 trapinit(void)
 {
+#ifdef SLAB_KERNEL
+  tickslock_ptr = (struct spinlock*)kmalloc(sizeof(struct spinlock));
+  if(!tickslock_ptr)
+    panic("trapinit: kmalloc");
+  memset(tickslock_ptr, 0, sizeof(struct spinlock));
+#endif
   initlock(&tickslock, "time");
 }
 

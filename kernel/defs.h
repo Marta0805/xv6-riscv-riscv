@@ -1,4 +1,5 @@
 struct buf;
+struct buddy_allocator;
 struct context;
 struct file;
 struct inode;
@@ -57,8 +58,28 @@ void            ireclaim(int);
 
 // kalloc.c
 void*           kalloc(void);
-void            kfree(void *);
+void*           kalloc_order(int);
+void            pgfree(void *);
+void            pgfree_order(void *, int);
 void            kinit(void);
+
+// slab.c
+void            kmem_init(void *, int);
+struct kmem_cache_s *kmem_cache_create(const char *, size_t, void (*)(void *), void (*)(void *));
+int             kmem_cache_shrink(struct kmem_cache_s *);
+void           *kmem_cache_alloc(struct kmem_cache_s *);
+void            kmem_cache_free(struct kmem_cache_s *, void *);
+void           *kmalloc(size_t);
+void            kfree(const void *);
+void            kmem_cache_destroy(struct kmem_cache_s *);
+void            kmem_cache_info(struct kmem_cache_s *);
+int             kmem_cache_error(struct kmem_cache_s *);
+
+// buddy.c
+void            buddy_init(struct buddy_allocator *, void *, void *);
+void           *buddy_alloc(struct buddy_allocator *, int);
+void            buddy_free(struct buddy_allocator *, void *, int);
+void            buddy_dump(struct buddy_allocator *);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -140,7 +161,12 @@ void            syscall();
 extern uint     ticks;
 void            trapinit(void);
 void            trapinithart(void);
+#ifdef SLAB_KERNEL
+extern struct spinlock *tickslock_ptr;
+#define tickslock (*tickslock_ptr)
+#else
 extern struct spinlock tickslock;
+#endif
 void            prepare_return(void);
 
 // uart.c

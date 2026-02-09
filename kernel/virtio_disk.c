@@ -15,11 +15,14 @@
 #include "fs.h"
 #include "buf.h"
 #include "virtio.h"
+#ifdef SLAB_KERNEL
+#include "slab.h"
+#endif
 
 // the address of virtio mmio register r.
 #define R(r) ((volatile uint32 *)(VIRTIO0 + (r)))
 
-static struct disk {
+struct disk_s {
   // a set (not a ring) of DMA descriptors, with which the
   // driver tells the device where to read and write individual
   // disk operations. there are NUM descriptors.
@@ -55,14 +58,26 @@ static struct disk {
   struct virtio_blk_req ops[NUM];
   
   struct spinlock vdisk_lock;
-  
-} disk;
+};
+
+#ifdef SLAB_KERNEL
+static struct disk_s *disk_ptr;  // dynamically allocated via kmalloc
+#define disk (*disk_ptr)
+#else
+static struct disk_s disk;
+#endif
 
 void
 virtio_disk_init(void)
 {
   uint32 status = 0;
 
+#ifdef SLAB_KERNEL
+  disk_ptr = (struct disk_s*)kmalloc(sizeof(struct disk_s));
+  if(!disk_ptr)
+    panic("virtio_disk_init: kmalloc");
+  memset(disk_ptr, 0, sizeof(struct disk_s));
+#endif
   initlock(&disk.vdisk_lock, "virtio_disk");
 
   if(*R(VIRTIO_MMIO_MAGIC_VALUE) != 0x74726976 ||

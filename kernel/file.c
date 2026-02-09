@@ -12,17 +12,41 @@
 #include "file.h"
 #include "stat.h"
 #include "proc.h"
+#ifdef SLAB_KERNEL
+#include "slab.h"
+#endif
 
+#ifdef SLAB_KERNEL
+struct devsw *devsw;  // dynamically allocated via kmalloc
+#else
 struct devsw devsw[NDEV];
+#endif
 struct {
   struct spinlock lock;
-  struct file file[NFILE];
+#ifdef SLAB_KERNEL
+  struct file *file;   // dynamically allocated via kmalloc
+#else
+  struct file file[NFILE];  // static array (original xv6)
+#endif
 } ftable;
 
 void
 fileinit(void)
 {
   initlock(&ftable.lock, "ftable");
+#ifdef SLAB_KERNEL
+  // Allocate devsw table dynamically
+  if(!devsw) {
+    devsw = (struct devsw*)kmalloc(sizeof(struct devsw) * NDEV);
+    if(!devsw)
+      panic("fileinit: kmalloc devsw");
+    memset(devsw, 0, sizeof(struct devsw) * NDEV);
+  }
+  ftable.file = (struct file*)kmalloc(sizeof(struct file) * NFILE);
+  if(!ftable.file)
+    panic("fileinit: kmalloc");
+  memset(ftable.file, 0, sizeof(struct file) * NFILE);
+#endif
 }
 
 // Allocate a file structure.

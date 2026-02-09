@@ -35,6 +35,10 @@ struct devsw {
   int (*write)(int, uint64, int);
 };
 
+#ifdef SLAB_KERNEL
+extern struct devsw *devsw;
+#else
 extern struct devsw devsw[];
+#endif
 
 #define CONSOLE 1

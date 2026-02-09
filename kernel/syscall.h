@@ -20,3 +20,15 @@
 #define SYS_link   19
 #define SYS_mkdir  20
 #define SYS_close  21
+#define SYS_kmem_init         22
+#define SYS_kmem_cache_create 23
+#define SYS_kmem_cache_alloc  24
+#define SYS_kmem_cache_free   25
+#define SYS_kmem_cache_destroy 26
+#define SYS_kmem_cache_shrink 27
+#define SYS_kmem_cache_info   28
+#define SYS_kmem_cache_error  29
+#define SYS_kmalloc           30
+#define SYS_kfree             31
+#define SYS_slab_write        32
+#define SYS_slab_read         33

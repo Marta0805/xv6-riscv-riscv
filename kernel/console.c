@@ -21,6 +21,9 @@
 #include "riscv.h"
 #include "defs.h"
 #include "proc.h"
+#ifdef SLAB_KERNEL
+#include "slab.h"
+#endif
 
 #define BACKSPACE 0x100  // erase the last output character
 #define C(x)  ((x)-'@')  // Control-x
@@ -42,12 +45,17 @@ consputc(int c)
   }
 }
 
+#define INPUT_BUF_SIZE 128
+
 struct {
   struct spinlock lock;
   
   // input circular buffer
-#define INPUT_BUF_SIZE 128
-  char buf[INPUT_BUF_SIZE];
+#ifdef SLAB_KERNEL
+  char *buf;   // dynamically allocated via kmalloc
+#else
+  char buf[INPUT_BUF_SIZE];  // static buffer (original xv6)
+#endif
   uint r;  // Read index
   uint w;  // Write index
   uint e;  // Edit index
@@ -188,6 +196,22 @@ void
 consoleinit(void)
 {
   initlock(&cons.lock, "cons");
+
+#ifdef SLAB_KERNEL
+  // Allocate console input buffer dynamically
+  cons.buf = (char*)kmalloc(INPUT_BUF_SIZE);
+  if(!cons.buf)
+    panic("consoleinit: kmalloc");
+  memset(cons.buf, 0, INPUT_BUF_SIZE);
+
+  // Allocate devsw table if not yet done (consoleinit runs before fileinit)
+  if(!devsw) {
+    devsw = (struct devsw*)kmalloc(sizeof(struct devsw) * NDEV);
+    if(!devsw)
+      panic("consoleinit: kmalloc devsw");
+    memset(devsw, 0, sizeof(struct devsw) * NDEV);
+  }
+#endif
 
   uartinit();
 

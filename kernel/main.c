@@ -11,12 +11,13 @@ void
 main()
 {
   if(cpuid() == 0){
-    consoleinit();
+    uartinit();      // uart needs to be up for early printf
     printfinit();
     printf("\n");
     printf("xv6 kernel is booting\n");
     printf("\n");
-    kinit();         // physical page allocator
+    kinit();         // physical page allocator + slab init
+    consoleinit();   // console (needs kmalloc for input buffer)
     kvminit();       // create kernel page table
     kvminithart();   // turn on paging
     procinit();      // process table

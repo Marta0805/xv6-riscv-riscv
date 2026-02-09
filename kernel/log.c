@@ -6,6 +6,9 @@
 #include "sleeplock.h"
 #include "fs.h"
 #include "buf.h"
+#ifdef SLAB_KERNEL
+#include "slab.h"
+#endif
 
 // Simple logging that allows concurrent FS system calls.
 //
@@ -37,7 +40,7 @@ struct logheader {
   int block[LOGBLOCKS];
 };
 
-struct log {
+struct log_s {
   struct spinlock lock;
   int start;
   int outstanding; // how many FS sys calls are executing.
@@ -45,7 +48,12 @@ struct log {
   int dev;
   struct logheader lh;
 };
-struct log log;
+#ifdef SLAB_KERNEL
+static struct log_s *log_ptr;  // dynamically allocated via kmalloc
+#define log (*log_ptr)
+#else
+static struct log_s log;
+#endif
 
 static void recover_from_log(void);
 static void commit();
@@ -56,6 +64,12 @@ initlog(int dev, struct superblock *sb)
   if (sizeof(struct logheader) >= BSIZE)
     panic("initlog: too big logheader");
 
+#ifdef SLAB_KERNEL
+  log_ptr = (struct log_s*)kmalloc(sizeof(struct log_s));
+  if(!log_ptr)
+    panic("initlog: kmalloc");
+  memset(log_ptr, 0, sizeof(struct log_s));
+#endif
   initlock(&log.lock, "log");
   log.start = sb->logstart;
   log.dev = dev;

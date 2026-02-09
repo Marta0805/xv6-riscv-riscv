@@ -20,26 +20,40 @@
 #include "fs.h"
 #include "buf.h"
 #include "file.h"
+#ifdef SLAB_KERNEL
+#include "slab.h"
+#endif
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 // there should be one superblock per disk device, but we run with
 // only one device
+#ifdef SLAB_KERNEL
+struct superblock *sb_ptr;  // dynamically allocated via kmalloc
+#define sb (*sb_ptr)
+#else
 struct superblock sb; 
+#endif
 
 // Read the super block.
 static void
-readsb(int dev, struct superblock *sb)
+readsb(int dev, struct superblock *sbp)
 {
   struct buf *bp;
 
   bp = bread(dev, 1);
-  memmove(sb, bp->data, sizeof(*sb));
+  memmove(sbp, bp->data, sizeof(*sbp));
   brelse(bp);
 }
 
 // Init fs
 void
 fsinit(int dev) {
+#ifdef SLAB_KERNEL
+  sb_ptr = (struct superblock*)kmalloc(sizeof(struct superblock));
+  if(!sb_ptr)
+    panic("fsinit: kmalloc sb");
+  memset(sb_ptr, 0, sizeof(struct superblock));
+#endif
   readsb(dev, &sb);
   if(sb.magic != FSMAGIC)
     panic("invalid file system");
@@ -176,15 +190,28 @@ bfree(int dev, uint b)
 
 struct {
   struct spinlock lock;
-  struct inode inode[NINODE];
+#ifdef SLAB_KERNEL
+  struct inode *inode;  // dynamically allocated via kmalloc
+#else
+  struct inode inode[NINODE];  // static array (original xv6)
+#endif
 } itable;
 
 void
 iinit()
 {
   int i = 0;
-  
+
   initlock(&itable.lock, "itable");
+
+#ifdef SLAB_KERNEL
+  // Allocate inode table dynamically
+  itable.inode = (struct inode*)kmalloc(sizeof(struct inode) * NINODE);
+  if(!itable.inode)
+    panic("iinit: kmalloc");
+  memset(itable.inode, 0, sizeof(struct inode) * NINODE);
+#endif
+
   for(i = 0; i < NINODE; i++) {
     initsleeplock(&itable.inode[i].lock, "inode");
   }
