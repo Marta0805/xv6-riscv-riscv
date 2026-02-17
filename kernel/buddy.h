@@ -8,7 +8,7 @@
 #endif
 
 #define MIN_ORDER 0
-#define MAX_ORDER 15   // up to 128MB (2^15 * 4KB)
+#define MAX_ORDER 15 
 
 #define BUDDY_ORDERS (MAX_ORDER - MIN_ORDER + 1)
 

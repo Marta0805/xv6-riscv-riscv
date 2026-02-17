@@ -10,6 +10,8 @@ struct sleeplock;
 struct stat;
 struct superblock;
 
+#include <stddef.h>
+
 // bio.c
 void            binit(void);
 struct buf*     bread(uint, uint);
@@ -61,12 +63,14 @@ void*           kalloc(void);
 void*           kalloc_order(int);
 void            pgfree(void *);
 void            pgfree_order(void *, int);
+void            kfree_order(void *, int);
 void            kinit(void);
 
 // slab.c
 void            kmem_init(void *, int);
 struct kmem_cache_s *kmem_cache_create(const char *, size_t, void (*)(void *), void (*)(void *));
 int             kmem_cache_shrink(struct kmem_cache_s *);
+int             kmem_cache_shrink_all(void);
 void           *kmem_cache_alloc(struct kmem_cache_s *);
 void            kmem_cache_free(struct kmem_cache_s *, void *);
 void           *kmalloc(size_t);
@@ -195,6 +199,9 @@ int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
 int             ismapped(pagetable_t, uint64);
 uint64          vmfault(pagetable_t, uint64, int);
+int mirror_user_pagetable(pagetable_t old,
+                           pagetable_t new,
+                           uint64 sz);
 
 // plic.c
 void            plicinit(void);

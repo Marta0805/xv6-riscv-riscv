@@ -45,11 +45,8 @@ static void *slab_obj_start(slab_t *slab)
 static int compute_obj_per_slab(uint64 obj_size, int order)
 {
     uint64 total = (uint64)BLOCK_SIZE << order;
-    // We need: sizeof(slab_t) + ceil(n/8) + padding + n * obj_size <= total
-    // Approximate: iterate
     uint64 hdr = ALIGN8(sizeof(slab_t));
     int n = (int)((total - hdr) / obj_size);
-    // Adjust for bitmap
     while (n > 0) {
         uint64 bitmap_bytes = (n + 7) / 8;
         uint64 overhead = ALIGN8(sizeof(slab_t) + bitmap_bytes);
@@ -60,9 +57,7 @@ static int compute_obj_per_slab(uint64 obj_size, int order)
     return n;
 }
 
-// Choose the buddy order for slabs in a cache with given object size.
-// We want at least a few objects per slab.
-#define MIN_OBJS_PER_SLAB 4
+#define MIN_OBJS_PER_SLAB 8
 
 static int choose_slab_order(uint64 obj_size)
 {
@@ -71,7 +66,6 @@ static int choose_slab_order(uint64 obj_size)
         if (n >= MIN_OBJS_PER_SLAB)
             return order;
     }
-    // Fall back: use the smallest order that fits at least 1 object
     for (int order = 0; order <= 14; order++) {
         if (compute_obj_per_slab(obj_size, order) >= 1)
             return order;
@@ -79,32 +73,18 @@ static int choose_slab_order(uint64 obj_size)
     return 0;
 }
 
-// ============================================================
-//  Internal: slab alloc / free
-// ============================================================
 
-// Build the per-slab free list: chain all free object indices.
-// We store the next-free index inside each free object's first 4 bytes.
-static void build_free_list(slab_t *slab, kmem_cache_t *cache)
-{
-    void *obj_base = slab_obj_start(slab);
-    for (int i = 0; i < cache->obj_per_slab - 1; i++) {
-        int *slot = (int *)((char *)obj_base + (uint64)i * cache->obj_size);
-        *slot = i + 1;   // point to next
-    }
-    // Last slot terminates
-    int *last = (int *)((char *)obj_base +
-                (uint64)(cache->obj_per_slab - 1) * cache->obj_size);
-    *last = -1;
-    slab->next_free = 0;  // first free is slot 0
-}
-
-static slab_t *alloc_slab(kmem_cache_t *cache)
-{
+static slab_t *alloc_slab(kmem_cache_t *cache){
 #ifdef SLAB_KERNEL
     void *region = kalloc_order(cache->slab_order);
 #else
     void *region = buddy_alloc(&slab_buddy, cache->slab_order);
+    if (!region) {
+        printf("alloc_slab: buddy_alloc failed for cache '%s' order=%d obj_size=%lu\n",
+               cache ? cache->name : "(null)", cache ? cache->slab_order : -1,
+               cache ? cache->obj_size : 0UL);
+        buddy_dump(&slab_buddy);
+    }
 #endif
     if (!region) {
         cache->error = 1;
@@ -115,17 +95,13 @@ static slab_t *alloc_slab(kmem_cache_t *cache)
     slab->cache = cache;
     slab->order = cache->slab_order;
     slab->free_count = cache->obj_per_slab;
+    slab->next_free = 0;
     slab->next = 0;
 
-    // bitmap sits right after slab_t
     slab->bitmap = (unsigned char *)((uint64)slab + sizeof(slab_t));
     int bitmap_bytes = (cache->obj_per_slab + 7) / 8;
     memset(slab->bitmap, 0, bitmap_bytes);
 
-    // Build embedded free list for O(1) alloc
-    build_free_list(slab, cache);
-
-    // Call constructor on all objects if present
     if (cache->ctor) {
         void *obj_base = slab_obj_start(slab);
         for (int i = 0; i < cache->obj_per_slab; i++) {
@@ -144,7 +120,6 @@ static slab_t *alloc_slab(kmem_cache_t *cache)
 
 static void destroy_slab(kmem_cache_t *cache, slab_t *slab)
 {
-    // Call destructor on allocated objects
     if (cache->dtor) {
         void *obj_base = slab_obj_start(slab);
         for (int i = 0; i < cache->obj_per_slab; i++) {
@@ -168,7 +143,6 @@ static void destroy_slab(kmem_cache_t *cache, slab_t *slab)
 
 static void free_empty_slab(kmem_cache_t *cache, slab_t *slab)
 {
-    // For free slabs, all objects are free — call dtor if needed
     if (cache->dtor) {
         void *obj_base = slab_obj_start(slab);
         for (int i = 0; i < cache->obj_per_slab; i++) {
@@ -188,22 +162,16 @@ static void free_empty_slab(kmem_cache_t *cache, slab_t *slab)
 #endif
 }
 
-// ============================================================
-//  kmem_init
-// ============================================================
-
 void kmem_init(void *space, int block_num)
 {
     initlock(&slab_state.lock, "slab");
     slab_state.caches = 0;
 
-    // Initialize small buffer caches (size-32 through size-131072)
     for (int i = 0; i < NUM_SMALL_BUF_SIZES; i++) {
         small_buf_caches[i] = 0;
     }
 
 #ifndef SLAB_KERNEL
-    // Deo 1: initialize private buddy for the given memory region
     if (space && block_num > 0) {
         void *mem_end = (void *)((uint64)space + (uint64)block_num * BLOCK_SIZE);
         buddy_init(&slab_buddy, space, mem_end);
@@ -211,12 +179,7 @@ void kmem_init(void *space, int block_num)
 #endif
 }
 
-// ============================================================
-//  kmem_cache_create
-// ============================================================
-
-static void str_copy(char *dst, const char *src, int max)
-{
+static void str_copy(char *dst, const char *src, int max){
     int i;
     for (i = 0; i < max - 1 && src[i]; i++)
         dst[i] = src[i];
@@ -232,7 +195,6 @@ kmem_cache_t *kmem_cache_create(const char *name, size_t size,
 
     uint64 aligned_size = ALIGN8(size);
 
-    // Allocate the cache descriptor (1 page = 4KB, more than enough)
 #ifdef SLAB_KERNEL
     kmem_cache_t *cache = (kmem_cache_t *)kalloc_order(0);
 #else
@@ -263,26 +225,7 @@ kmem_cache_t *kmem_cache_create(const char *name, size_t size,
 
     cache->error = 0;
     cache->grown_since_shrink = 0;
-    cache->alloc_count = 0;
-    cache->free_count_total = 0;
 
-    // Slab coloring: compute max color offset
-    // Color = bytes of "waste" space at end of slab, divided into
-    // ALIGN8 chunks.  Each new slab gets a different color offset
-    // to reduce CPU cache line conflicts.
-    {
-        uint64 slab_bytes = (uint64)BLOCK_SIZE << cache->slab_order;
-        int bitmap_bytes = (cache->obj_per_slab + 7) / 8;
-        uint64 overhead = ALIGN8(sizeof(slab_t) + bitmap_bytes);
-        uint64 used = overhead + (uint64)cache->obj_per_slab * cache->obj_size;
-        uint64 waste = slab_bytes - used;
-        cache->color_max = (int)(waste / 8);  // number of 8-byte color offsets
-        if (cache->color_max < 0)
-            cache->color_max = 0;
-        cache->color_next = 0;
-    }
-
-    // Add to global cache list
     acquire(&slab_state.lock);
     cache->next = slab_state.caches;
     slab_state.caches = cache;
@@ -291,10 +234,6 @@ kmem_cache_t *kmem_cache_create(const char *name, size_t size,
     return cache;
 }
 
-// ============================================================
-//  kmem_cache_alloc
-// ============================================================
-
 void *kmem_cache_alloc(kmem_cache_t *cachep)
 {
     if (!cachep)
@@ -302,11 +241,9 @@ void *kmem_cache_alloc(kmem_cache_t *cachep)
 
     acquire(&cachep->lock);
 
-    // Try partial slabs first
     slab_t *slab = cachep->partial_slabs;
 
     if (!slab) {
-        // Try free slabs
         slab = cachep->free_slabs;
         if (slab) {
             cachep->free_slabs = slab->next;
@@ -316,17 +253,19 @@ void *kmem_cache_alloc(kmem_cache_t *cachep)
     }
 
     if (!slab) {
-        // Allocate a new slab
+        printf("kmem_cache_alloc: no partial or free slabs for cache '%s', allocating new slab\n", cachep->name);
         slab = alloc_slab(cachep);
+        
         if (!slab) {
+            printf("kmem_cache_alloc: alloc_slab failed for cache '%s'\n", cachep->name);
             release(&cachep->lock);
             return 0;
         }
         slab->next = cachep->partial_slabs;
         cachep->partial_slabs = slab;
+        printf("kmem_cache_alloc: allocated new slab for cache '%s', total slabs: %d\n", cachep->name, cachep->slab_count);
     }
 
-    // O(1) alloc via embedded free list
     int i = slab->next_free;
     if (i < 0 || i >= cachep->obj_per_slab) {
         cachep->error = 2;
@@ -336,19 +275,10 @@ void *kmem_cache_alloc(kmem_cache_t *cachep)
 
     void *obj = (char *)slab_obj_start(slab) + (uint64)i * cachep->obj_size;
 
-    // Advance free list: next index stored in object (before ctor overwrote it
-    // on alloc_slab, but after free the chain is rebuilt, so read it now)
-    // We saved the chain in build_free_list; after ctor it may be overwritten,
-    // but bitmap_set tells us it's allocated. We need to maintain the chain
-    // only among free objects. On alloc_slab, ctor runs AFTER build_free_list,
-    // so the chain values may be destroyed. Let's use bitmap scan as fallback
-    // when next_free chain is unreliable (i.e. when ctor is set).
     bitmap_set(slab->bitmap, i);
     slab->free_count--;
     cachep->free_objs--;
-    cachep->alloc_count++;
 
-    // Find next free slot: scan bitmap from i+1 (still fast, usually nearby)
     slab->next_free = -1;
     for (int j = i + 1; j < cachep->obj_per_slab; j++) {
         if (!bitmap_test(slab->bitmap, j)) {
@@ -365,23 +295,18 @@ void *kmem_cache_alloc(kmem_cache_t *cachep)
         }
     }
 
-    // If slab is now full, move to full list
     if (slab->free_count == 0) {
         cachep->partial_slabs = slab->next;
         slab->next = cachep->full_slabs;
         cachep->full_slabs = slab;
     }
+    printf("%p", obj);
 
     release(&cachep->lock);
     return obj;
 }
 
-// ============================================================
-//  kmem_cache_free
-// ============================================================
 
-// O(1) slab lookup: slab is aligned to 2^order pages,
-// so we can find it by masking the object address.
 static inline slab_t *obj_to_slab(kmem_cache_t *cachep, void *objp)
 {
     uint64 slab_size = (uint64)BLOCK_SIZE << cachep->slab_order;
@@ -396,10 +321,8 @@ void kmem_cache_free(kmem_cache_t *cachep, void *objp)
 
     acquire(&cachep->lock);
 
-    // O(1) slab lookup via alignment
     slab_t *slab = obj_to_slab(cachep, objp);
 
-    // Verify the slab belongs to this cache
     if (slab->cache != cachep) {
         cachep->error = 3;
         release(&cachep->lock);
@@ -415,26 +338,17 @@ void kmem_cache_free(kmem_cache_t *cachep, void *objp)
         return;
     }
 
-    // Determine if slab was full before this free
     int was_full = (slab->free_count == 0);
 
-    // Mark free
     bitmap_clear(slab->bitmap, idx);
     slab->free_count++;
     cachep->free_objs++;
-    cachep->free_count_total++;
 
-    // Update next_free hint (keep it pointing to lowest free index)
     if (slab->next_free < 0 || idx < slab->next_free)
         slab->next_free = idx;
 
-    // Re-initialize with constructor so object is ready for reuse
-    if (cachep->ctor)
-        cachep->ctor(objp);
-
     if (slab->free_count == cachep->obj_per_slab) {
-        // Slab is completely empty — remove from current list, move to free list
-        // Find and unlink from partial list
+
         slab_t **pp = &cachep->partial_slabs;
         while (*pp && *pp != slab)
             pp = &(*pp)->next;
@@ -444,7 +358,6 @@ void kmem_cache_free(kmem_cache_t *cachep, void *objp)
         slab->next = cachep->free_slabs;
         cachep->free_slabs = slab;
     } else if (was_full) {
-        // Was full, now partial — remove from full list, add to partial list
         slab_t **pp = &cachep->full_slabs;
         while (*pp && *pp != slab)
             pp = &(*pp)->next;
@@ -458,10 +371,6 @@ void kmem_cache_free(kmem_cache_t *cachep, void *objp)
     release(&cachep->lock);
 }
 
-// ============================================================
-//  kmem_cache_shrink
-// ============================================================
-
 int kmem_cache_shrink(kmem_cache_t *cachep)
 {
     if (!cachep)
@@ -469,7 +378,6 @@ int kmem_cache_shrink(kmem_cache_t *cachep)
 
     acquire(&cachep->lock);
 
-    // Only shrink if cache has NOT grown since last shrink
     if (cachep->grown_since_shrink) {
         cachep->grown_since_shrink = 0;
         release(&cachep->lock);
@@ -489,10 +397,6 @@ int kmem_cache_shrink(kmem_cache_t *cachep)
     return freed_blocks;
 }
 
-// ============================================================
-//  kmem_cache_destroy
-// ============================================================
-
 void kmem_cache_destroy(kmem_cache_t *cachep)
 {
     if (!cachep)
@@ -500,7 +404,6 @@ void kmem_cache_destroy(kmem_cache_t *cachep)
 
     acquire(&cachep->lock);
 
-    // Free all slabs in all lists
     while (cachep->free_slabs) {
         slab_t *s = cachep->free_slabs;
         cachep->free_slabs = s->next;
@@ -521,7 +424,6 @@ void kmem_cache_destroy(kmem_cache_t *cachep)
 
     release(&cachep->lock);
 
-    // Remove from global cache list
     acquire(&slab_state.lock);
     kmem_cache_t **pp = &slab_state.caches;
     while (*pp) {
@@ -533,17 +435,12 @@ void kmem_cache_destroy(kmem_cache_t *cachep)
     }
     release(&slab_state.lock);
 
-    // Free the cache descriptor itself
 #ifdef SLAB_KERNEL
     pgfree_order(cachep, 0);
 #else
     buddy_free(&slab_buddy, cachep, 0);
 #endif
 }
-
-// ============================================================
-//  kmem_cache_info
-// ============================================================
 
 void kmem_cache_info(kmem_cache_t *cachep)
 {
@@ -559,22 +456,29 @@ void kmem_cache_info(kmem_cache_t *cachep)
 
     int cache_blocks = cachep->slab_count * (1 << cachep->slab_order);
 
+
     printf("CACHE: %s\n", cachep->name);
     printf("  obj size:   %lu B\n", cachep->obj_size);
     printf("  cache size: %d blocks\n", cache_blocks);
     printf("  slabs:      %d\n", cachep->slab_count);
     printf("  objs/slab:  %d\n", cachep->obj_per_slab);
     printf("  usage:      %d%%\n", pct);
-    printf("  allocs:     %lu\n", cachep->alloc_count);
-    printf("  frees:      %lu\n", cachep->free_count_total);
-    printf("  colors:     %d\n", cachep->color_max);
+
+    // printf("Partial slabs:\n");
+    // slab_t *par = cachep->partial_slabs;
+    // while(par){
+    //     printf("free %p\n",par);
+    //     par = par->next;
+    // }
+    // printf("Full slabs:\n");
+    // slab_t *full = cachep->full_slabs;
+    // while(full){
+    //     printf("free %p\n", full);
+    //     full = full->next;
+    // }
 
     release(&cachep->lock);
 }
-
-// ============================================================
-//  kmem_cache_error
-// ============================================================
 
 int kmem_cache_error(kmem_cache_t *cachep)
 {
@@ -590,17 +494,14 @@ int kmem_cache_error(kmem_cache_t *cachep)
     return err;
 }
 
-// ============================================================
-//  kmalloc / kfree  (small memory buffer interface)
-// ============================================================
 
-// Find the smallest power-of-2 size >= requested
 static int size_to_index(size_t size)
 {
     for (int i = 0; i < NUM_SMALL_BUF_SIZES; i++) {
         if (size <= (1UL << (SMALL_BUF_MIN_ORDER + i)))
             return i;
     }
+
     return -1;
 }
 
@@ -611,19 +512,15 @@ void *kmalloc(size_t size)
 
     int idx = size_to_index(size);
     if (idx < 0)
-        return 0;  // too large for small buffer
+        return 0;  
 
-    // Lazily create the size-N cache (protected by slab_state.lock)
     if (!small_buf_caches[idx]) {
         acquire(&slab_state.lock);
-        // Double-check after acquiring lock
         if (!small_buf_caches[idx]) {
             uint64 buf_size = 1UL << (SMALL_BUF_MIN_ORDER + idx);
             char name[32];
-            // Build name "size-NNNNN"
             char *p = name;
             *p++ = 's'; *p++ = 'i'; *p++ = 'z'; *p++ = 'e'; *p++ = '-';
-            // Simple uint to string
             uint64 tmp = buf_size;
             char digits[20];
             int d = 0;
@@ -643,7 +540,6 @@ void *kmalloc(size_t size)
             release(&slab_state.lock);
         }
     }
-
     return kmem_cache_alloc(small_buf_caches[idx]);
 }
 
@@ -652,25 +548,42 @@ void kfree(const void *objp)
     if (!objp)
         return;
 
-    // O(1) cache lookup: find which small-buf cache owns this object
-    // by checking each possible slab alignment.
-    // Try all small buffer sizes — the matching one will have a valid
-    // slab header with a cache pointer that matches.
     for (int i = 0; i < NUM_SMALL_BUF_SIZES; i++) {
         kmem_cache_t *cache = small_buf_caches[i];
+
         if (!cache)
             continue;
 
-        uint64 slab_size = (uint64)BLOCK_SIZE << cache->slab_order;
-        uint64 slab_addr = (uint64)objp & ~(slab_size - 1);
-        slab_t *slab = (slab_t *)slab_addr;
+        slab_t *slab = cache->full_slabs;
+        while (slab) {
+            if((uint64)objp >= (uint64)slab && (uint64)objp < (uint64)slab + ((uint64)BLOCK_SIZE << slab->order)){
+                break;
+            }
+            slab = slab->next;
 
-        // Quick check: does this slab belong to this cache?
-        if (slab->cache == cache) {
+        }
+        if(!slab) {
+            slab = cache->partial_slabs;
+            while (slab) {
+                if((uint64)objp >= (uint64)slab && (uint64)objp < (uint64)slab + ((uint64)BLOCK_SIZE << slab->order)){
+                    break;
+                }
+                slab = slab->next;
+            }
+        }
+        if(!slab) {
+            continue;
+        }
+    
+        void *obj_base = slab_obj_start(slab);
+
+        uint64 offset = (uint64)objp - (uint64)obj_base;
+        int idx = (int)(offset / cache->obj_size);
+
+        if (idx >= 0 && idx < cache->obj_per_slab && (uint64)objp == (uint64)obj_base + (uint64)idx * cache->obj_size) {
             kmem_cache_free(cache, (void *)objp);
             return;
         }
     }
-
     printf("[SLAB] kfree: could not find object %p\n", objp);
 }

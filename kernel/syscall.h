@@ -30,5 +30,3 @@
 #define SYS_kmem_cache_error  29
 #define SYS_kmalloc           30
 #define SYS_kfree             31
-#define SYS_slab_write        32
-#define SYS_slab_read         33

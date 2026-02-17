@@ -440,6 +440,7 @@ sys_exec(void)
 
   argaddr(1, &uargv);
   if(argstr(0, path, MAXPATH) < 0) {
+    printf("sys_exec: argstr failed\n");
     return -1;
   }
   memset(argv, 0, sizeof(argv));

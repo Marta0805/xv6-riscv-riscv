@@ -52,5 +52,3 @@ entry("kmem_cache_info");
 entry("kmem_cache_error");
 entry("kmalloc");
 entry("kfree");
-entry("slab_write");
-entry("slab_read");

@@ -39,6 +39,7 @@ kexec(char *path, char **argv)
 
   // Open the executable file.
   if((ip = namei(path)) == 0){
+    printf("kexec: namei failed for '%s'\n", path);
     end_op();
     return -1;
   }
@@ -46,14 +47,14 @@ kexec(char *path, char **argv)
 
   // Read the ELF header.
   if(readi(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
-    goto bad;
+    { printf("kexec: readi elf header failed\n"); goto bad; }
 
   // Is this really an ELF file?
   if(elf.magic != ELF_MAGIC)
-    goto bad;
+    { printf("kexec: not ELF (magic=%x)\n", elf.magic); goto bad; }
 
   if((pagetable = proc_pagetable(p)) == 0)
-    goto bad;
+    { printf("kexec: proc_pagetable failed\n"); goto bad; }
 
   // Load program into memory.
   for(i=0, off=elf.phoff; i<elf.phnum; i++, off+=sizeof(ph)){
@@ -69,10 +70,10 @@ kexec(char *path, char **argv)
       goto bad;
     uint64 sz1;
     if((sz1 = uvmalloc(pagetable, sz, ph.vaddr + ph.memsz, flags2perm(ph.flags))) == 0)
-      goto bad;
+      { printf("kexec: uvmalloc failed for ph at vaddr %p\n", (void*)ph.vaddr); goto bad; }
     sz = sz1;
     if(loadseg(pagetable, ph.vaddr, ip, ph.off, ph.filesz) < 0)
-      goto bad;
+      { printf("kexec: loadseg failed for vaddr %p\n", (void*)ph.vaddr); goto bad; }
   }
   iunlockput(ip);
   end_op();

@@ -43,6 +43,7 @@ pipealloc(struct file **f0, struct file **f1)
     acquire(&pipe_cache_lock);
     if(!pipe_cache) {
       pipe_cache = kmem_cache_create("pipe", sizeof(struct pipe), 0, 0);
+      kmem_cache_info(pipe_cache);
       if(!pipe_cache)
         panic("pipealloc: cache create");
     }
@@ -52,14 +53,23 @@ pipealloc(struct file **f0, struct file **f1)
 
   pi = 0;
   *f0 = *f1 = 0;
-  if((*f0 = filealloc()) == 0 || (*f1 = filealloc()) == 0)
+  if((*f0 = filealloc()) == 0) {
     goto bad;
+  }
+  if((*f1 = filealloc()) == 0) {
+    goto bad;
+  }
 #ifdef SLAB_KERNEL
-  if((pi = (struct pipe*)kmem_cache_alloc(pipe_cache)) == 0)
+  if((pi = (struct pipe*)kmem_cache_alloc(pipe_cache)) == 0) {
+    kmem_cache_info(pipe_cache);
+    printf("pipealloc: kmem_cache_alloc failed\n");
     goto bad;
+  }
 #else
-  if((pi = (struct pipe*)kalloc()) == 0)
+  if((pi = (struct pipe*)kalloc()) == 0) {
+    printf("pipealloc: kalloc failed\n");
     goto bad;
+  }
 #endif
   pi->readopen = 1;
   pi->writeopen = 1;

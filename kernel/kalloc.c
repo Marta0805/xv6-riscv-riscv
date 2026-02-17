@@ -1,10 +1,3 @@
-// Physical memory allocator, for user processes,
-// kernel stacks, page-table pages,
-// and pipe buffers.
-//
-// Deo 2 (SLAB_KERNEL): Global buddy manages ALL physical memory.
-// Deo 1 (default):     Original xv6 free-list; slab has its own buddy.
-
 #include "types.h"
 #include "param.h"
 #include "memlayout.h"
@@ -17,13 +10,16 @@
 #include "buddy.h"
 #endif
 
-extern char end[]; // first address after kernel.
-                   // defined by kernel.ld.
+void
+kfree_order(void *pa, int order)
+{
+  pgfree_order(pa, order);
+}
+
+extern char end[]; 
 
 #ifdef SLAB_KERNEL
-// -------------------------------------------------------
-//  Deo 2: global buddy manages all physical memory
-// -------------------------------------------------------
+
 static struct buddy_allocator global_buddy;
 
 void
@@ -65,15 +61,6 @@ pgfree_order(void *pa, int order)
 }
 
 #else
-// -------------------------------------------------------
-//  Deo 1: original xv6 free-list (no buddy for kernel)
-//         slab initializes its own buddy in kmem_init
-// -------------------------------------------------------
-
-// Reserve top 32 MB for slab test buddy
-#define SLAB_RESERVE_BLOCKS  8192
-#define SLAB_RESERVE_SIZE    ((uint64)SLAB_RESERVE_BLOCKS * PGSIZE)
-#define SLAB_RESERVE_START   (PHYSTOP - SLAB_RESERVE_SIZE)
 
 struct run {
   struct run *next;
@@ -90,8 +77,7 @@ void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
-  // Only free pages BELOW the slab reserve region
-  freerange(end, (void*)SLAB_RESERVE_START);
+  freerange(end, (void*)PHYSTOP);
 }
 
 void
@@ -136,8 +122,6 @@ kalloc(void)
   return (void*)r;
 }
 
-// Not used by kernel in Deo 1, but needed for linking.
-// Slab uses its own buddy directly.
 void *
 kalloc_order(int order)
 {

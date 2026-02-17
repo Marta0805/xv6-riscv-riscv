@@ -55,7 +55,6 @@ void buddy_init(struct buddy_allocator *b, void *start, void *end)
     for (int i = 0; i < BUDDY_ORDERS; i++)
         b->free[i] = 0;
 
-    // Find the highest order that fits at all
     int max_ord = MAX_ORDER;
     while (max_ord >= MIN_ORDER) {
         if (((uint64)1 << max_ord) * BLOCK_SIZE <= total)
@@ -72,14 +71,12 @@ void buddy_init(struct buddy_allocator *b, void *start, void *end)
     b->max_order = max_ord;
     b->total_size = total;
 
-    // Greedily place blocks: from largest order down to smallest,
-    // filling all available memory.
     uint64 addr = b->start;
     uint64 remaining = total;
     int placed = 0;
 
     for (int order = max_ord; order >= MIN_ORDER; order--) {
-        uint64 bsize = (uint64)1 << (order + 12);
+        uint64 bsize = ((uint64)1 << order) * BLOCK_SIZE;
         while (remaining >= bsize) {
             struct buddy_block *bl = (struct buddy_block *)addr;
             bl->next = b->free[idx(order)];
@@ -89,6 +86,8 @@ void buddy_init(struct buddy_allocator *b, void *start, void *end)
             placed++;
         }
     }
+
+    printf("start=%p end=%p total=%lu\n", start, end, total);
 
     printf("[BUDDY] initialized: %lu KB in %d blocks\n",
            (total - remaining) / 1024, placed);

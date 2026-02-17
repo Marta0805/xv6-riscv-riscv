@@ -309,7 +309,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
-      goto err;
+       goto err;
     memmove(mem, (char*)pa, PGSIZE);
     if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
       pgfree(mem);
@@ -322,6 +322,34 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
 }
+
+
+int
+mirror_user_pagetable(pagetable_t old, pagetable_t new, uint64 sz)
+{
+  pte_t *pte;
+  uint64 pa, i;
+  uint flags;
+
+  for(i = 0; i < sz; i += PGSIZE){
+    if((pte = walk(old, i, 0)) == 0)
+      continue;
+
+    if((*pte & PTE_V) == 0)
+      continue;
+
+    pa = PTE2PA(*pte);
+
+    flags = PTE_FLAGS(*pte);
+    flags &= ~PTE_U;   
+
+    if(mappages(new, i, PGSIZE, pa, flags) != 0)
+      return -1;
+  }
+
+  return 0;
+}
+
 
 // mark a PTE invalid for user access.
 // used by exec for the user stack guard page.
