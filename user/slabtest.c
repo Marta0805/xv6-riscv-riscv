@@ -10,7 +10,7 @@
 
 struct data_s {
     int id;
-    kmem_cache_t shared;   
+    kmem_cache_t *shared;
     int iterations;
 };
 
@@ -21,7 +21,6 @@ const char * const CACHE_NAMES[] = {
     "tc_3",
     "tc_4"
 };
-
 
 int check(void *data, int size) {
     for (int i = 0; i < size; i++) {
@@ -41,7 +40,7 @@ void construct_copy(void *data) {
 }
 
 struct objects_s {
-    kmem_cache_t cache;   // HANDLE
+    kmem_cache_t *cache;   // pointer to cache
     void *data;
 };
 
@@ -50,7 +49,7 @@ void work(void* pdata) {
     int size = 0;
     int object_size = data.id + 1;
 
-    kmem_cache_t cache =
+    kmem_cache_t *cache =
         kmem_cache_create(CACHE_NAMES[data.id], object_size, 0, 0);
 
 
@@ -60,7 +59,7 @@ void work(void* pdata) {
 
     for (int i = 0; i < data.iterations; i++) {
         if (i % 100 == 0) {
-            objs[size].data = (void*) kmem_cache_alloc(data.shared);
+            objs[size].data = kmem_cache_alloc(data.shared);
             printf("Value ");
 
             objs[size].cache = data.shared;
@@ -69,7 +68,7 @@ void work(void* pdata) {
                 printf("Value not correct!\n");
             }
         } else {
-            objs[size].data = (void*) kmem_cache_alloc(cache);
+            objs[size].data = kmem_cache_alloc(cache);
             objs[size].cache = cache;
 
             memset(objs[size].data, MASK, object_size);
@@ -89,7 +88,7 @@ void work(void* pdata) {
         }
 
         kmem_cache_free(objs[i].cache,
-                        (uint64)objs[i].data);
+                objs[i].data);
         
     }
 
@@ -112,7 +111,7 @@ int main() {
 
     kmem_init((uint64)space, num_of_blocks);    
     
-    kmem_cache_t shared =
+    kmem_cache_t *shared =
         kmem_cache_create("shared object",
                           SHARED_SIZE,
                           ((uint64)construct) > (uint64)construct_copy ? (uint64)construct : (uint64)construct_copy,

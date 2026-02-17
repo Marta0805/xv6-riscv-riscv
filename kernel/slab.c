@@ -80,9 +80,6 @@ static slab_t *alloc_slab(kmem_cache_t *cache){
 #else
     void *region = buddy_alloc(&slab_buddy, cache->slab_order);
     if (!region) {
-        printf("alloc_slab: buddy_alloc failed for cache '%s' order=%d obj_size=%lu\n",
-               cache ? cache->name : "(null)", cache ? cache->slab_order : -1,
-               cache ? cache->obj_size : 0UL);
         buddy_dump(&slab_buddy);
     }
 #endif
@@ -253,17 +250,14 @@ void *kmem_cache_alloc(kmem_cache_t *cachep)
     }
 
     if (!slab) {
-        printf("kmem_cache_alloc: no partial or free slabs for cache '%s', allocating new slab\n", cachep->name);
         slab = alloc_slab(cachep);
         
         if (!slab) {
-            printf("kmem_cache_alloc: alloc_slab failed for cache '%s'\n", cachep->name);
             release(&cachep->lock);
             return 0;
         }
         slab->next = cachep->partial_slabs;
         cachep->partial_slabs = slab;
-        printf("kmem_cache_alloc: allocated new slab for cache '%s', total slabs: %d\n", cachep->name, cachep->slab_count);
     }
 
     int i = slab->next_free;
@@ -300,8 +294,6 @@ void *kmem_cache_alloc(kmem_cache_t *cachep)
         slab->next = cachep->full_slabs;
         cachep->full_slabs = slab;
     }
-    printf("%p", obj);
-
     release(&cachep->lock);
     return obj;
 }

@@ -111,8 +111,6 @@ extern uint64 sys_kmem_cache_info(void);
 extern uint64 sys_kmem_cache_error(void);
 extern uint64 sys_kmalloc(void);
 extern uint64 sys_kfree(void);
-extern uint64 sys_slab_write(void);
-extern uint64 sys_slab_read(void);
 
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
@@ -148,8 +146,6 @@ static uint64 (*syscalls[])(void) = {
 [SYS_kmem_cache_error]  sys_kmem_cache_error,
 [SYS_kmalloc]           sys_kmalloc,
 [SYS_kfree]             sys_kfree,
-[SYS_slab_write]        sys_slab_write,
-[SYS_slab_read]         sys_slab_read,
 };
 
 void
