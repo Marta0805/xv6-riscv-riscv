@@ -198,13 +198,10 @@ consoleinit(void)
   initlock(&cons.lock, "cons");
 
 #ifdef SLAB_KERNEL
-  // Allocate console input buffer dynamically
   cons.buf = (char*)kmalloc(INPUT_BUF_SIZE);
   if(!cons.buf)
     panic("consoleinit: kmalloc");
   memset(cons.buf, 0, INPUT_BUF_SIZE);
-
-  // Allocate devsw table if not yet done (consoleinit runs before fileinit)
   if(!devsw) {
     devsw = (struct devsw*)kmalloc(sizeof(struct devsw) * NDEV);
     if(!devsw)

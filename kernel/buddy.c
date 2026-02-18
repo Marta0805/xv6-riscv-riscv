@@ -86,11 +86,6 @@ void buddy_init(struct buddy_allocator *b, void *start, void *end)
             placed++;
         }
     }
-
-    printf("start=%p end=%p total=%lu\n", start, end, total);
-
-    printf("[BUDDY] initialized: %lu KB in %d blocks\n",
-           (total - remaining) / 1024, placed);
 }
 
 void *buddy_alloc(struct buddy_allocator *b, int order)
@@ -145,8 +140,7 @@ void buddy_free(struct buddy_allocator *b, void *addr, int order)
 
     while (order < b->max_order) {
         uint64 size = (1UL << order) * BLOCK_SIZE;
-        uint64 buddy_addr =
-            ((block - b->start) ^ size) + b->start;
+        uint64 buddy_addr = ((block - b->start) ^ size) + b->start;
 
         struct buddy_block **pp = &b->free[idx(order)];
         struct buddy_block *curr = *pp;

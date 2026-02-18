@@ -49,8 +49,8 @@ static int compute_obj_per_slab(uint64 obj_size, int order)
     int n = (int)((total - hdr) / obj_size);
     while (n > 0) {
         uint64 bitmap_bytes = (n + 7) / 8;
-        uint64 overhead = ALIGN8(sizeof(slab_t) + bitmap_bytes);
-        if (overhead + (uint64)n * obj_size <= total)
+        uint64 overhead = (sizeof(slab_t) + bitmap_bytes);
+        if (ALIGN8(overhead) + (uint64)n * obj_size <= total)
             break;
         n--;
     }
@@ -190,7 +190,7 @@ kmem_cache_t *kmem_cache_create(const char *name, size_t size,
     if (size == 0)
         return 0;
 
-    uint64 aligned_size = ALIGN8(size);
+    //uint64 aligned_size = ALIGN8(size);
 
 #ifdef SLAB_KERNEL
     kmem_cache_t *cache = (kmem_cache_t *)kalloc_order(0);
@@ -202,14 +202,14 @@ kmem_cache_t *kmem_cache_create(const char *name, size_t size,
 
     memset(cache, 0, sizeof(*cache));
     str_copy(cache->name, name, sizeof(cache->name));
-    cache->obj_size = aligned_size;
+    cache->obj_size = size;
     cache->ctor = ctor;
     cache->dtor = dtor;
 
     initlock(&cache->lock, "cache");
 
-    cache->slab_order = choose_slab_order(aligned_size);
-    cache->obj_per_slab = compute_obj_per_slab(aligned_size, cache->slab_order);
+    cache->slab_order = choose_slab_order(size);
+    cache->obj_per_slab = compute_obj_per_slab(size, cache->slab_order);
 
     if (cache->obj_per_slab <= 0) {
 #ifdef SLAB_KERNEL
@@ -472,6 +472,7 @@ void kmem_cache_info(kmem_cache_t *cachep)
     printf("  cache size: %d blocks\n", cache_blocks);
     printf("  slabs:      %d\n", cachep->slab_count);
     printf("  objs/slab:  %d\n", cachep->obj_per_slab);
+    printf("  total objs: %d\n", cachep->total_objs - cachep->free_objs);
     printf("  usage:      %d%%\n", pct);
 
     // printf("Partial slabs:\n");
