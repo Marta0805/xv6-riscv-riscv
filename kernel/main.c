@@ -17,6 +17,9 @@ main()
     printf("xv6 kernel is booting\n");
     printf("\n");
     kinit();         // physical page allocator + slab init
+#ifdef SLAB_KERNEL
+    syscallinit();   // syscall dispatch table (needs kmalloc)
+#endif
     consoleinit();   // console (needs kmalloc for input buffer)
     kvminit();       // create kernel page table
     kvminithart();   // turn on paging

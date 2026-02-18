@@ -682,7 +682,7 @@ either_copyin(void *dst, int user_src, uint64 src, uint64 len)
 void
 procdump(void)
 {
-  static char *states[] = {
+  char *states[] = {
   [UNUSED]    "unused",
   [USED]      "used",
   [SLEEPING]  "sleep ",

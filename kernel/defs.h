@@ -160,6 +160,9 @@ void            argaddr(int, uint64 *);
 int             fetchstr(uint64, char*, int);
 int             fetchaddr(uint64, uint64*);
 void            syscall();
+#ifdef SLAB_KERNEL
+void            syscallinit(void);
+#endif
 
 // trap.c
 extern uint     ticks;

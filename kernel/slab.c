@@ -546,13 +546,14 @@ void kfree(const void *objp)
         if (!cache)
             continue;
 
+        acquire(&cache->lock);
+
         slab_t *slab = cache->full_slabs;
         while (slab) {
             if((uint64)objp >= (uint64)slab && (uint64)objp < (uint64)slab + ((uint64)BLOCK_SIZE << slab->order)){
                 break;
             }
             slab = slab->next;
-
         }
         if(!slab) {
             slab = cache->partial_slabs;
@@ -564,6 +565,7 @@ void kfree(const void *objp)
             }
         }
         if(!slab) {
+            release(&cache->lock);
             continue;
         }
     
@@ -573,9 +575,11 @@ void kfree(const void *objp)
         int idx = (int)(offset / cache->obj_size);
 
         if (idx >= 0 && idx < cache->obj_per_slab && (uint64)objp == (uint64)obj_base + (uint64)idx * cache->obj_size) {
+            release(&cache->lock);
             kmem_cache_free(cache, (void *)objp);
             return;
         }
+        release(&cache->lock);
     }
     printf("[SLAB] kfree: could not find object %p\n", objp);
 }

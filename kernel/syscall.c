@@ -6,6 +6,9 @@
 #include "proc.h"
 #include "syscall.h"
 #include "defs.h"
+#ifdef SLAB_KERNEL
+#include "slab.h"
+#endif
 
 // Fetch the uint64 at addr from the current process.
 int
@@ -114,6 +117,51 @@ extern uint64 sys_kfree(void);
 
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
+#define NSYSCALLS (SYS_kfree + 1)
+
+#ifdef SLAB_KERNEL
+static uint64 (**syscalls)(void);  // dynamically allocated via kmalloc
+
+void
+syscallinit(void)
+{
+  syscalls = (uint64 (**)(void))kmalloc(sizeof(uint64 (*)(void)) * NSYSCALLS);
+  if(!syscalls)
+    panic("syscallinit: kmalloc");
+  memset(syscalls, 0, sizeof(uint64 (*)(void)) * NSYSCALLS);
+  syscalls[SYS_fork]    = sys_fork;
+  syscalls[SYS_exit]    = sys_exit;
+  syscalls[SYS_wait]    = sys_wait;
+  syscalls[SYS_pipe]    = sys_pipe;
+  syscalls[SYS_read]    = sys_read;
+  syscalls[SYS_kill]    = sys_kill;
+  syscalls[SYS_exec]    = sys_exec;
+  syscalls[SYS_fstat]   = sys_fstat;
+  syscalls[SYS_chdir]   = sys_chdir;
+  syscalls[SYS_dup]     = sys_dup;
+  syscalls[SYS_getpid]  = sys_getpid;
+  syscalls[SYS_sbrk]    = sys_sbrk;
+  syscalls[SYS_pause]   = sys_pause;
+  syscalls[SYS_uptime]  = sys_uptime;
+  syscalls[SYS_open]    = sys_open;
+  syscalls[SYS_write]   = sys_write;
+  syscalls[SYS_mknod]   = sys_mknod;
+  syscalls[SYS_unlink]  = sys_unlink;
+  syscalls[SYS_link]    = sys_link;
+  syscalls[SYS_mkdir]   = sys_mkdir;
+  syscalls[SYS_close]   = sys_close;
+  syscalls[SYS_kmem_init]         = sys_kmem_init;
+  syscalls[SYS_kmem_cache_create] = sys_kmem_cache_create;
+  syscalls[SYS_kmem_cache_alloc]  = sys_kmem_cache_alloc;
+  syscalls[SYS_kmem_cache_free]   = sys_kmem_cache_free;
+  syscalls[SYS_kmem_cache_destroy] = sys_kmem_cache_destroy;
+  syscalls[SYS_kmem_cache_shrink] = sys_kmem_cache_shrink;
+  syscalls[SYS_kmem_cache_info]   = sys_kmem_cache_info;
+  syscalls[SYS_kmem_cache_error]  = sys_kmem_cache_error;
+  syscalls[SYS_kmalloc]           = sys_kmalloc;
+  syscalls[SYS_kfree]             = sys_kfree;
+}
+#else
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
 [SYS_exit]    sys_exit,
@@ -147,6 +195,7 @@ static uint64 (*syscalls[])(void) = {
 [SYS_kmalloc]           sys_kmalloc,
 [SYS_kfree]             sys_kfree,
 };
+#endif
 
 void
 syscall(void)
@@ -155,7 +204,7 @@ syscall(void)
   struct proc *p = myproc();
 
   num = p->trapframe->a7;
-  if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+  if(num > 0 && num < NSYSCALLS && syscalls[num]) {
     // Use num to lookup the system call function for num, call it,
     // and store its return value in p->trapframe->a0
     p->trapframe->a0 = syscalls[num]();

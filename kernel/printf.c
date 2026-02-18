@@ -23,7 +23,11 @@ static struct {
   struct spinlock lock;
 } pr;
 
+#ifdef SLAB_KERNEL
+static const char *digits = "0123456789abcdef";  // pointer (scalar) to string literal
+#else
 static char digits[] = "0123456789abcdef";
+#endif
 
 static void
 printint(long long xx, int base, int sign)
