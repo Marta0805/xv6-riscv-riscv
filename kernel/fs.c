@@ -188,14 +188,24 @@ bfree(int dev, uint b)
 // dev, and inum.  One must hold ip->lock in order to
 // read or write that inode's ip->valid, ip->size, ip->type, &c.
 
+#ifdef SLAB_KERNEL
+static kmem_cache_t *inode_cache;
+#endif
+
 struct {
   struct spinlock lock;
 #ifdef SLAB_KERNEL
-  struct inode *inode;  // dynamically allocated via kmalloc
+  struct inode *inode[NINODE];  // array of pointers, objects from slab cache
 #else
   struct inode inode[NINODE];  // static array (original xv6)
 #endif
 } itable;
+
+#ifdef SLAB_KERNEL
+#define INODE_AT(i) (itable.inode[i])
+#else
+#define INODE_AT(i) (&itable.inode[i])
+#endif
 
 void
 iinit()
@@ -205,15 +215,20 @@ iinit()
   initlock(&itable.lock, "itable");
 
 #ifdef SLAB_KERNEL
-  // Allocate inode table dynamically
-  itable.inode = (struct inode*)kmalloc(sizeof(struct inode) * NINODE);
-  if(!itable.inode)
-    panic("iinit: kmalloc");
-  memset(itable.inode, 0, sizeof(struct inode) * NINODE);
+  // Create inode cache and allocate all inode objects
+  inode_cache = kmem_cache_create("inode", sizeof(struct inode), 0, 0);
+  if(!inode_cache)
+    panic("iinit: cache create");
+  for(i = 0; i < NINODE; i++) {
+    itable.inode[i] = (struct inode*)kmem_cache_alloc(inode_cache);
+    if(!itable.inode[i])
+      panic("iinit: alloc");
+    memset(itable.inode[i], 0, sizeof(struct inode));
+  }
 #endif
 
   for(i = 0; i < NINODE; i++) {
-    initsleeplock(&itable.inode[i].lock, "inode");
+    initsleeplock(&INODE_AT(i)->lock, "inode");
   }
 }
 
@@ -280,7 +295,8 @@ iget(uint dev, uint inum)
 
   // Is the inode already in the table?
   empty = 0;
-  for(ip = &itable.inode[0]; ip < &itable.inode[NINODE]; ip++){
+  for(int i = 0; i < NINODE; i++){
+    ip = INODE_AT(i);
     if(ip->ref > 0 && ip->dev == dev && ip->inum == inum){
       ip->ref++;
       release(&itable.lock);

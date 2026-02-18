@@ -12,9 +12,12 @@
 struct cpu cpus[NCPU];
 
 #ifdef SLAB_KERNEL
-struct proc *proc;  // dynamically allocated via kmalloc
+static kmem_cache_t *proc_cache;
+struct proc *proc[NPROC];  // array of pointers, objects from slab cache
+#define PROC_AT(i) (proc[i])
 #else
 struct proc proc[NPROC];  // static array (original xv6)
+#define PROC_AT(i) (&proc[i])
 #endif
 
 struct proc *initproc;
@@ -39,23 +42,26 @@ struct spinlock wait_lock;
 void
 proc_mapstacks(pagetable_t kpgtbl)
 {
-  struct proc *p;
-
 #ifdef SLAB_KERNEL
-  // Allocate proc table if not yet done
-  if(!proc) {
-    proc = (struct proc*)kmalloc(sizeof(struct proc) * NPROC);
-    if(!proc)
-      panic("proc_mapstacks: kmalloc");
-    memset(proc, 0, sizeof(struct proc) * NPROC);
+  // Create proc cache and allocate all proc objects
+  if(!proc_cache) {
+    proc_cache = kmem_cache_create("proc", sizeof(struct proc), 0, 0);
+    if(!proc_cache)
+      panic("proc_mapstacks: cache create");
+    for(int i = 0; i < NPROC; i++) {
+      proc[i] = (struct proc*)kmem_cache_alloc(proc_cache);
+      if(!proc[i])
+        panic("proc_mapstacks: alloc");
+      memset(proc[i], 0, sizeof(struct proc));
+    }
   }
 #endif
 
-  for(p = proc; p < &proc[NPROC]; p++) {
+  for(int i = 0; i < NPROC; i++) {
     char *pa = kalloc();
     if(pa == 0)
       panic("kalloc");
-    uint64 va = KSTACK((int) (p - proc));
+    uint64 va = KSTACK(i);
     kvmmap(kpgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
   }
 }
@@ -68,10 +74,11 @@ procinit(void)
 
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
-  for(p = proc; p < &proc[NPROC]; p++) {
+  for(int i = 0; i < NPROC; i++) {
+      p = PROC_AT(i);
       initlock(&p->lock, "proc");
       p->state = UNUSED;
-      p->kstack = KSTACK((int) (p - proc));
+      p->kstack = KSTACK(i);
   }
 }
 
@@ -128,7 +135,8 @@ allocproc(void)
 {
   struct proc *p;
 
-  for(p = proc; p < &proc[NPROC]; p++) {
+  for(int i = 0; i < NPROC; i++) {
+    p = PROC_AT(i);
     acquire(&p->lock);
     if(p->state == UNUSED) {
       goto found;
@@ -329,7 +337,8 @@ reparent(struct proc *p)
 {
   struct proc *pp;
 
-  for(pp = proc; pp < &proc[NPROC]; pp++){
+  for(int i = 0; i < NPROC; i++){
+    pp = PROC_AT(i);
     if(pp->parent == p){
       pp->parent = initproc;
       wakeup(initproc);
@@ -396,7 +405,8 @@ kwait(uint64 addr)
   for(;;){
     // Scan through table looking for exited children.
     havekids = 0;
-    for(pp = proc; pp < &proc[NPROC]; pp++){
+    for(int i = 0; i < NPROC; i++){
+      pp = PROC_AT(i);
       if(pp->parent == p){
         // make sure the child isn't still in exit() or swtch().
         acquire(&pp->lock);
@@ -455,7 +465,8 @@ scheduler(void)
     intr_off();
 
     int found = 0;
-    for(p = proc; p < &proc[NPROC]; p++) {
+    for(int i = 0; i < NPROC; i++) {
+      p = PROC_AT(i);
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
         // Switch to chosen process.  It is the process's job
@@ -592,7 +603,8 @@ wakeup(void *chan)
 {
   struct proc *p;
 
-  for(p = proc; p < &proc[NPROC]; p++) {
+  for(int i = 0; i < NPROC; i++) {
+    p = PROC_AT(i);
     if(p != myproc()){
       acquire(&p->lock);
       if(p->state == SLEEPING && p->chan == chan) {
@@ -611,7 +623,8 @@ kkill(int pid)
 {
   struct proc *p;
 
-  for(p = proc; p < &proc[NPROC]; p++){
+  for(int i = 0; i < NPROC; i++){
+    p = PROC_AT(i);
     acquire(&p->lock);
     if(p->pid == pid){
       p->killed = 1;
@@ -694,7 +707,8 @@ procdump(void)
   char *state;
 
   printf("\n");
-  for(p = proc; p < &proc[NPROC]; p++){
+  for(int i = 0; i < NPROC; i++){
+    p = PROC_AT(i);
     if(p->state == UNUSED)
       continue;
     if(p->state >= 0 && p->state < NELEM(states) && states[p->state])

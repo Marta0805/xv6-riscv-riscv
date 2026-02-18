@@ -26,10 +26,14 @@
 #include "slab.h"
 #endif
 
+#ifdef SLAB_KERNEL
+static kmem_cache_t *buf_cache;
+#endif
+
 struct {
   struct spinlock lock;
 #ifdef SLAB_KERNEL
-  struct buf *buf;     // dynamically allocated via kmalloc
+  struct buf *buf[NBUF];     // array of pointers, objects from slab cache
 #else
   struct buf buf[NBUF];  // static array (original xv6)
 #endif
@@ -40,25 +44,35 @@ struct {
   struct buf head;
 } bcache;
 
+#ifdef SLAB_KERNEL
+#define BUF_AT(i) (bcache.buf[i])
+#else
+#define BUF_AT(i) (&bcache.buf[i])
+#endif
+
 void
 binit(void)
 {
-  struct buf *b;
-
   initlock(&bcache.lock, "bcache");
 
 #ifdef SLAB_KERNEL
-  // Allocate buffer cache dynamically
-  bcache.buf = (struct buf*)kmalloc(sizeof(struct buf) * NBUF);
-  if(!bcache.buf)
-    panic("binit: kmalloc");
-  memset(bcache.buf, 0, sizeof(struct buf) * NBUF);
+  // Create buf cache and allocate all buf objects
+  buf_cache = kmem_cache_create("buf", sizeof(struct buf), 0, 0);
+  if(!buf_cache)
+    panic("binit: cache create");
+  for(int i = 0; i < NBUF; i++) {
+    bcache.buf[i] = (struct buf*)kmem_cache_alloc(buf_cache);
+    if(!bcache.buf[i])
+      panic("binit: alloc");
+    memset(bcache.buf[i], 0, sizeof(struct buf));
+  }
 #endif
 
   // Create linked list of buffers
   bcache.head.prev = &bcache.head;
   bcache.head.next = &bcache.head;
-  for(b = bcache.buf; b < bcache.buf+NBUF; b++){
+  for(int i = 0; i < NBUF; i++){
+    struct buf *b = BUF_AT(i);
     b->next = bcache.head.next;
     b->prev = &bcache.head;
     initsleeplock(&b->lock, "buffer");

@@ -21,14 +21,25 @@ struct devsw *devsw;  // dynamically allocated via kmalloc
 #else
 struct devsw devsw[NDEV];
 #endif
+
+#ifdef SLAB_KERNEL
+static kmem_cache_t *file_cache;
+#endif
+
 struct {
   struct spinlock lock;
 #ifdef SLAB_KERNEL
-  struct file *file;   // dynamically allocated via kmalloc
+  struct file *file[NFILE];   // array of pointers, objects from slab cache
 #else
   struct file file[NFILE];  // static array (original xv6)
 #endif
 } ftable;
+
+#ifdef SLAB_KERNEL
+#define FILE_AT(i) (ftable.file[i])
+#else
+#define FILE_AT(i) (&ftable.file[i])
+#endif
 
 void
 fileinit(void)
@@ -42,10 +53,16 @@ fileinit(void)
       panic("fileinit: kmalloc devsw");
     memset(devsw, 0, sizeof(struct devsw) * NDEV);
   }
-  ftable.file = (struct file*)kmalloc(sizeof(struct file) * NFILE);
-  if(!ftable.file)
-    panic("fileinit: kmalloc");
-  memset(ftable.file, 0, sizeof(struct file) * NFILE);
+  // Create file cache and allocate all file objects
+  file_cache = kmem_cache_create("file", sizeof(struct file), 0, 0);
+  if(!file_cache)
+    panic("fileinit: cache create");
+  for(int i = 0; i < NFILE; i++) {
+    ftable.file[i] = (struct file*)kmem_cache_alloc(file_cache);
+    if(!ftable.file[i])
+      panic("fileinit: alloc");
+    memset(ftable.file[i], 0, sizeof(struct file));
+  }
 #endif
 }
 
@@ -56,7 +73,8 @@ filealloc(void)
   struct file *f;
 
   acquire(&ftable.lock);
-  for(f = ftable.file; f < ftable.file + NFILE; f++){
+  for(int i = 0; i < NFILE; i++){
+    f = FILE_AT(i);
     if(f->ref == 0){
       f->ref = 1;
       release(&ftable.lock);
