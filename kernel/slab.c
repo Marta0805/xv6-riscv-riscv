@@ -389,6 +389,24 @@ int kmem_cache_shrink(kmem_cache_t *cachep)
     return freed_blocks;
 }
 
+int kmem_cache_shrink_all(void)
+{
+    int total_freed = 0;
+
+    acquire(&slab_state.lock);
+    kmem_cache_t *c = slab_state.caches;
+    release(&slab_state.lock);
+
+    while (c) {
+        total_freed += kmem_cache_shrink(c);
+        acquire(&slab_state.lock);
+        c = c->next;
+        release(&slab_state.lock);
+    }
+
+    return total_freed;
+}
+
 void kmem_cache_destroy(kmem_cache_t *cachep)
 {
     if (!cachep)
