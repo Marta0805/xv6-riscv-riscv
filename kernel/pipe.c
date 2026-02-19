@@ -43,7 +43,6 @@ pipealloc(struct file **f0, struct file **f1)
     acquire(&pipe_cache_lock);
     if(!pipe_cache) {
       pipe_cache = kmem_cache_create("pipe", sizeof(struct pipe), 0, 0);
-      kmem_cache_info(pipe_cache);
       if(!pipe_cache)
         panic("pipealloc: cache create");
     }
